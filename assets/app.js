@@ -30,6 +30,7 @@
     h.innerHTML = `<div class="topbar"><span>☎ +91 98765 43210　 ✉ gasc@college.ac.in</span><span>⌖ Melvengatapuram, Ranipet</span></div><header class="site-header"><a class="brand" href="index.html"><span class="brand-mark">GASC</span><span>GASC<small>MELVENGATAPURAM</small></span></a><button class="menu-btn" id="menu-btn" type="button">☰</button><nav class="nav" id="nav"><a href="index.html">Home</a><a href="about.html">About</a><a href="departments.html">Departments</a><a href="facilities.html">Facilities</a><a href="activities.html">Activities</a><a href="gallery.html">Gallery</a><a href="notices.html">Notice Board</a><a href="contact.html">Contact</a><a class="nav-login" href="login.html">Portal Login</a></nav></header>`;
     $('#menu-btn')?.addEventListener('click', () => $('#nav')?.classList.toggle('open'));
   }
+
   function footer() {
     const f = $('#footer'); if (!f) return;
     f.innerHTML = `<footer class="footer"><div class="footer-grid"><div><h2>GASC<br><small>Melvengatapuram</small></h2><i>Educate · Empower · Excel</i></div><div><h3>Quick Links</h3><a href="index.html">Home</a><a href="about.html">About College</a><a href="departments.html">Departments</a><a href="gallery.html">Gallery</a></div><div><h3>Contact Us</h3><p>☎ +91 98765 43210</p><p>✉ gasc@college.ac.in</p><p>⌖ Melvengatapuram, Ranipet</p></div><div><h3>Portal</h3><a href="login.html">Login</a><a href="register.html">Register</a><a href="notices.html">Notice Board</a></div></div><div class="copyright"><span>© 2026 GASC Melvengatapuram. All rights reserved.</span><span>Designed for Education</span></div></footer>`;
@@ -42,6 +43,7 @@
     } catch (e) { console.warn('Using default website content', e); }
     return cmsCache;
   }
+
   function applyCMS() {
     const c = cmsCache;
     const title = $('#hero-title'); if (title) title.innerHTML = `${esc(c.heroTitle)}<br><em>${esc(c.heroSubtitle)}</em>`;
@@ -52,10 +54,12 @@
     $$('[data-cms="email"]').forEach(x => x.textContent = c.email || '');
     $$('[data-cms="address"]').forEach(x => x.textContent = c.address || '');
   }
+
   function deptCards(target) {
     if (!target) return;
     target.innerHTML = DEPTS.map((d, i) => `<article class="dept-card"><div class="dept-photo">${['📚','📖','💻','📐','📊'][i]}</div><h3>${esc(d)}</h3><p>Undergraduate programme</p><a class="btn navy" href="department.html?name=${encodeURIComponent(d)}">View Details →</a></article>`).join('');
   }
+
   function slider() {
     const bg = $('#hero-bg'), dots = $('#hero-dots'); if (!bg) return;
     let i = 0; const slides = Array.isArray(cmsCache.slides) && cmsCache.slides.length ? cmsCache.slides : IMAGES;
@@ -64,6 +68,7 @@
     };
     $('#prev-slide')?.addEventListener('click', () => show(i - 1)); $('#next-slide')?.addEventListener('click', () => show(i + 1)); show(0); setInterval(() => show(i + 1), 5000);
   }
+
   async function renderNotices(target, limit = 4) {
     if (!target) return;
     target.innerHTML = '<p class="muted">Loading notices…</p>';
@@ -149,11 +154,13 @@
     const {data, error:profileError} = await sb.from('profiles').select('*').eq('id', user.id).single();
     if (profileError) throw profileError; return data;
   }
+
   async function photoUrl(path) {
     if (!path) return 'assets/images/campus-entrance.jpg';
     const {data, error} = await sb.storage.from('profile-photos').createSignedUrl(path, 3600);
     return !error && data?.signedUrl ? data.signedUrl : 'assets/images/campus-entrance.jpg';
   }
+
   function table(rows) { return `<table class="data-table"><tbody>${rows.map(r => `<tr><th>${esc(r[0])}</th><td>${esc(r[1] || '—')}</td></tr>`).join('')}</tbody></table>`; }
   const statusPill = status => `<span class="pill">${esc(status || '')}</span>`;
 
@@ -203,6 +210,7 @@
     if (error) { alert(`Could not update account: ${error.message}`); return; }
     await dashboard();
   }
+
   async function setupCMSForm() {
     const form = $('#cms-form'); if (!form) return;
     const c = await loadCMS();
@@ -227,6 +235,7 @@
       } catch (err) { console.error(err); say(msg,err.message,true); }
     };
   }
+
   async function setupDepartmentEditor() {
     const host = $('#dept-editor'); if (!host) return;
     const {data, error} = await sb.from('departments').select('*').order('id');
@@ -237,15 +246,41 @@
       say($('.form-message',form),updateError ? updateError.message : 'Saved.',!!updateError);
     });
   }
+
   async function setupNoticeAdmin() {
     const form = $('#notice-form'); if (!form) return;
     await refreshAdminNotices();
     form.onsubmit = async e => {
-      e.preventDefault(); const msg = $('#notice-admin-msg');
-      const {error} = await sb.from('notices').insert({title:form.elements.title.value.trim(),body:form.elements.body.value.trim(),notice_date:new Date().toISOString().slice(0,10),is_published:true,created_by:currentProfile.id});
-      if (error) say(msg,error.message,true); else { say(msg,'Notice published successfully.'); form.reset(); await refreshAdminNotices(); }
+      e.preventDefault();
+      const msg = $('#notice-admin-msg');
+
+      const noticeTitle = form.elements.title.value.trim();
+      const noticeBody = form.elements.body.value.trim();
+
+      if (!noticeTitle || !noticeBody) {
+        say(msg, 'Please enter both a notice title and message.', true);
+        return;
+      }
+
+      const {error} = await sb.from('notices').insert({
+        title: noticeTitle,
+        description: noticeBody,
+        body: noticeBody,
+        notice_date: new Date().toISOString().slice(0, 10),
+        is_published: true,
+        created_by: currentProfile.id
+      });
+
+      if (error) {
+        say(msg, error.message, true);
+      } else {
+        say(msg, 'Notice published successfully.');
+        form.reset();
+        await refreshAdminNotices();
+      }
     };
   }
+
   async function refreshAdminNotices() {
     const host = $('#admin-notice-list'); if (!host) return;
     const {data,error} = await sb.from('notices').select('id,title,notice_date,is_published').order('created_at',{ascending:false}).limit(50);
@@ -271,5 +306,6 @@
     $('#logout')?.addEventListener('click', async () => { await sb.auth.signOut(); location.href='login.html'; });
     $('#contact-form')?.addEventListener('submit', e => { e.preventDefault(); say($('#contact-msg'),'Thank you. Your enquiry has been recorded.'); e.target.reset(); });
   }
+
   document.addEventListener('DOMContentLoaded', init);
 })();
