@@ -1,0 +1,36 @@
+GASC COLLEGE MANAGEMENT SYSTEM — இரண்டு மாற்றங்களுக்கான Update
+
+இந்த Update-ல்:
+1. Timetable day_of_week INTEGER compatibility:
+   Monday=1, Tuesday=2, Wednesday=3, Thursday=4, Friday=5, Saturday=6.
+   UI-ல் நாள் பெயர் காட்டப்படும்; Supabase-க்கு integer அனுப்பப்படும்.
+2. Automatic attendance:
+   09:30 IST-க்கு தினசரி cohort session உருவாக்க pg_cron job.
+   09:30–10:30 IST இடையில் மாணவர் தனது signed-in account மூலம் self check-in செய்யலாம்.
+   10:30 IST-க்கு மீதமுள்ள active students-க்கு Absent பதிவு செய்ய pg_cron job.
+   Faculty/HOD/Admin session start செய்ய வேண்டியதில்லை; அவர்கள் records பார்க்க/திருத்தலாம்.
+
+மிக முக்கியமான வரம்பு:
+- இந்த build-ல் FACE RECOGNITION / BIOMETRIC IDENTITY CHECK இல்லை.
+- Student login self-check-in மட்டுமே. இது மாணவர் வகுப்பறையில் உடல்ரீதியாக இருப்பதை நிரூபிக்காது.
+- Face recognition-ஐ செயல்படுத்த, மாணவர் ஒப்புதல், biometric data protection, retention/deletion policy, false-match review மற்றும் non-biometric alternative ஆகியவை முதலில் கல்லூரியால் தீர்மானிக்கப்பட வேண்டும்.
+- pg_cron வேலை செய்ய Supabase project-ல் pg_cron extension கிடைக்க வேண்டும். SQL இயக்கிய பிறகு cron.job-ல் இரு jobs இருப்பதைச் சரிபார்க்க வேண்டும்.
+
+நிறுவும் முன்:
+- தற்போதைய Supabase database backup எடுக்கவும்.
+- தற்போதைய GitHub project-ஐ மாற்றாமல் வைத்திருக்கவும்.
+- database/GASC_Automatic_Attendance_and_Timetable_Integer_Fix.sql-ஐ படித்து, schema-வுடன் பொருந்துவதை உறுதி செய்த பிறகே Supabase SQL Editor-ல் ஒருமுறை இயக்கவும்.
+- ஏற்கெனவே இதே SQL இயக்கப்பட்டிருந்தால், மீண்டும் இயக்குவதற்கு முன் cron.job-ஐச் சரிபார்க்கவும். Script அதே பெயருள்ள இரண்டு jobs-ஐ மட்டும் unschedule செய்து மீண்டும் schedule செய்கிறது.
+- assets/app.js-ஐ உங்கள் project-இல் உள்ள assets/app.js-க்கு மாற்றவும். மற்ற HTML/CSS/config/images மாற்றப்படவில்லை.
+
+சோதனை:
+1. SQL வெற்றியடைந்ததும் cron.job-ல் gasc-open-attendance-0930-ist மற்றும் gasc-finalize-attendance-1030-ist இருக்க வேண்டும்.
+2. காலை 09:30–10:30 IST-ல் active student login செய்து Mark My Attendance அழுத்தவும்.
+3. இரண்டாவது முறை அழுத்தினால் duplicate row உருவாகக்கூடாது.
+4. 10:30 IST-க்கு பிறகு RPC attendance window error தர வேண்டும்.
+5. 10:30 IST job ஓடிய பிறகு பதிவு செய்யாத மாணவர்களுக்கு absent rows இருக்க வேண்டும்.
+6. Timetable-ல் Monday முதல் Saturday வரை save செய்து, பட்டியலில் நாள் பெயர் சரியாகத் திரும்புகிறதா பார்க்கவும்.
+
+Static validation:
+- JavaScript node --check: PASS.
+- Live Supabase / cron / browser end-to-end tests: NOT RUN (இங்கு live project access இல்லை).

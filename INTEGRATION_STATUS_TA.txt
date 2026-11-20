@@ -1,0 +1,23 @@
+GASC College Management System - Combined Integration Status
+
+இந்த ZIP உங்கள் Backup-ஐ அடிப்படையாகக் கொண்டு தயாரிக்கப்பட்ட Integration Candidate.
+
+செய்த மாற்றங்கள்:
+- பழைய Public Website HTML pages, images, login/register pages மற்றும் config.js பாதுகாக்கப்பட்டுள்ளன.
+- Attendance, Timetable, Leave modules app.js-ல் இணைக்கப்பட்டுள்ளன.
+- Timetable-க்கு Section field சேர்க்கப்பட்டுள்ளது; பழைய rows Section A என backfill ஆகும்.
+- Admin Leave விண்ணப்பிக்க முடியாதபடி UI மாற்றப்பட்டுள்ளது; Admin review செய்யலாம்.
+- Attendance audit மற்றும் Leave approval hierarchy-க்கு database trigger SQL சேர்க்கப்பட்டுள்ளது.
+- Timetable write access-க்கு கூடுதல் database trigger SQL சேர்க்கப்பட்டுள்ளது.
+
+சோதனை முடிவுகள்:
+- JavaScript syntax check: PASS.
+- HTML local asset references: PASS (missing local references இல்லை).
+- Supabase live integration / RLS / RPC / browser end-to-end tests: NOT RUN.
+
+முக்கியம்:
+- இது இன்னும் Live production release அல்ல.
+- உங்கள் live Supabase-ஐ இந்த workspace-ல் நேரடியாகச் சோதிக்க முடியவில்லை.
+- ஏற்கெனவே இயக்கிய migration-ஐ மீண்டும் இயக்க வேண்டாம்.
+- database/GASC_Combined_Integrity_Fix.sql-ஐ live schema backup மற்றும் review இல்லாமல் இயக்க வேண்டாம்.
+- Facial recognition சேர்க்கப்படவில்லை; Attendance manual marking மட்டுமே.

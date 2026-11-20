@@ -1,0 +1,29 @@
+GASC COLLEGE MANAGEMENT SYSTEM — FINAL BUILD NOTES
+
+இந்த ZIP-ல் Public Website, Login/Registration, Admin, Faculty, HOD, Student dashboards, Attendance, Timetable, Leave Management ஆகியவை ஒரே project ஆக இணைக்கப்பட்டுள்ளன. Original project pages, images, config.js மற்றும் CSS பாதுகாக்கப்பட்டுள்ளன.
+
+முக்கிய DB பொருத்தங்கள்:
+- உங்கள் live attendance_records schema-வில் attendance_status NOT NULL என்பதால் frontend மற்றும் automatic-attendance SQL அதையே எழுதுகிறது. status column இருந்தால் compatibility-க்காக அதிலும் அதே value எழுதப்படும்.
+- உங்கள் live attendance_sessions.subject NOT NULL என்பதால் automatic session-க்கு 'Daily Attendance' subject பயன்படுத்தப்படுகிறது.
+- உங்கள் live timetable_entries.day_of_week INTEGER என்பதால் Monday=1, Tuesday=2, Wednesday=3, Thursday=4, Friday=5, Saturday=6 என சேமிக்கப்படுகிறது; UI-ல் மீண்டும் day name காட்டப்படும்.
+- Attendance auto schedule: 09:30 AM IST session creation; 10:30 AM IST-ல் மீதமுள்ள மாணவர்களுக்கு Absent. Student self-check-in trigger-ல் தனியாக அனுமதிக்கப்பட்டுள்ளது: signed-in student தனது சொந்த session-ல் மட்டும் 09:30–10:30 IST இடையே Present பதிவு செய்ய முடியும். Duplicate rows unique(session_id, student_id) மூலம் தவிர்க்கப்படும்.
+- Student self-check-in என்பது signed-in account அடிப்படையில். உண்மையான Face Recognition / biometric matching இந்த build-ல் இல்லை; camera capture-ஐ face recognition என்று தவறாகக் காட்டவில்லை.
+- Leave Management code இந்த integration-க்காக மாற்றப்படவில்லை.
+
+SUPABASE — கவனமாக செய்யவும்:
+1. Live database backup எடுக்கவும்.
+2. ஏற்கெனவே இயக்கிய GASC_Three_Management_Migration.sql-ஐ மீண்டும் இயக்க வேண்டாம். அது பழைய text day_of_week / status schema-ஐ உருவாக்கும் வகையில் உள்ளது.
+3. இந்த build-ல் உள்ள database/GASC_Combined_Integrity_Fix.sql-ஐ SQL Editor-ல் மீண்டும் இயக்கி attendance auto-system trigger compatibility-ஐ update செய்யவும். இது additive / trigger replace script; existing attendance rows-ஐ delete செய்யாது.
+4. அதன் பிறகு database/GASC_Automatic_Attendance_and_Timetable_Integer_Fix.sql-ஐ இயக்கவும். இது உங்கள் live integer timetable + attendance_status + subject NOT NULL schema-க்கு பொருத்தப்பட்டுள்ளது; named cron jobs-ஐ மட்டும் replace செய்கிறது.
+5. get_attendance_student_roster RPC ஏற்கெனவே நிறுவப்படவில்லை என்றால் மட்டும் database/GASC_Three_Management_Roster_RPC.sql இயக்கவும்.
+6. Supabase SQL Editor-ல் function output / cron.job active status சரிபார்க்கவும். Cron UTC: 04:00 = 09:30 IST; 05:00 = 10:30 IST.
+
+DEPLOY:
+- ZIP-ஐ extract செய்து உள்ள project files-ஐ GitHub repository-க்கு upload/commit செய்யவும்.
+- assets/config.js-ல் Supabase URL மற்றும் anon key சரியாக உள்ளதா உறுதி செய்யவும். Service-role key-ஐ frontend-ல் வைக்க வேண்டாம்.
+- GitHub Pages publish ஆன பிறகு login, student attendance button, staff roster, timetable save/display, Leave Management ஆகியவற்றைச் சோதிக்கவும்.
+
+TEST STATUS:
+- JavaScript syntax: local check செய்யப்படுகிறது.
+- ZIP integrity / local HTML asset references: local check செய்யப்படுகிறது.
+- Live Supabase RLS/RPC/cron மற்றும் browser end-to-end: இந்த workspace-ல் அணுகல் இல்லாததால் இன்னும் live-ஆகச் சரிபார்க்கப்படவில்லை. இதை tested என்று கருத வேண்டாம்.
