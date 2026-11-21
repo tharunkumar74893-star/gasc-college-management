@@ -1,1 +1,187 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Student Dashboard | GASC</title><link rel="stylesheet" href="assets/style.css"></head><body data-page="student-dashboard"><div id="header"></div><main class="wrap section"><div class="dashboard-heading"><div><span class="eyebrow">GASC PORTAL</span><h1>Student Dashboard</h1><p class="muted">Welcome to your student workspace.</p></div><button class="btn outline" id="logout">Logout</button></div><div id="dashboard-content"></div></main><div id="footer"></div><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script src="assets/config.js"></script><script src="assets/app.js"></script></body></html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Student Dashboard | GASC</title><link rel="stylesheet" href="assets/style.css"></head><body data-page="student-dashboard"><div id="header"></div><main class="wrap section"><div class="dashboard-heading"><div><span class="eyebrow">GASC PORTAL</span><h1>Student Dashboard</h1><p class="muted">Welcome to your student workspace.</p></div><button class="btn outline" id="logout">Logout</button></div><div id="dashboard-content"></div>
+
+<!-- Face Attendance Verification Section (Add-on) -->
+<section id="gasc-face-attendance-section" style="margin-top:24px;padding:18px;border:1px solid #cbd5e1;border-radius:12px;background:#ffffff;">
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+    <div>
+      <h2 style="margin:0 0 4px;font-size:18px;">Face Attendance Verification</h2>
+      <p class="muted" style="margin:0;font-size:13px;">Verify your face (threshold &lt; 0.55) to mark today's attendance as PRESENT.</p>
+    </div>
+    <span id="gasc-att-badge" style="padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;background:#f1f5f9;color:#334155;">Checking status...</span>
+  </div>
+
+  <div style="margin-top:14px;">
+    <video id="att-face-video" width="320" height="240" autoplay muted playsinline style="display:none;border-radius:8px;background:#000;margin-bottom:10px;"></video>
+    <p id="gasc-att-status" style="margin:6px 0 12px;font-size:14px;color:#334155;"></p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button type="button" class="btn teal" id="btn-open-att-cam">Start Camera</button>
+      <button type="button" class="btn" id="btn-verify-att-face" disabled>Verify Face &amp; Mark PRESENT</button>
+      <button type="button" class="btn outline" id="btn-enroll-from-dash" style="display:none;">Enroll Face Now</button>
+    </div>
+  </div>
+</section>
+</main><div id="footer"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+<script src="assets/config.js"></script>
+<script src="assets/app.js"></script>
+<script type="module">
+  import {
+    startCameraStream,
+    stopCameraStream,
+    verifyAndMarkAttendance,
+    enrollStudentFace
+  } from './assets/face-attendance.js';
+
+  const supabaseUrl = window.GASC_SUPABASE_URL;
+  const supabaseKey = window.GASC_SUPABASE_ANON_KEY;
+  const supabase = (window.supabase && window.supabase.createClient && supabaseUrl && supabaseKey)
+    ? window.supabase.createClient(supabaseUrl, supabaseKey)
+    : (window.supabaseClient || null);
+
+  const videoEl = document.getElementById('att-face-video');
+  const statusEl = document.getElementById('gasc-att-status');
+  const badgeEl = document.getElementById('gasc-att-badge');
+  const openCamBtn = document.getElementById('btn-open-att-cam');
+  const verifyBtn = document.getElementById('btn-verify-att-face');
+  const enrollDashBtn = document.getElementById('btn-enroll-from-dash');
+
+  function setBadge(text, bg, color) {
+    badgeEl.textContent = text;
+    badgeEl.style.background = bg;
+    badgeEl.style.color = color;
+  }
+
+  async function initAttendancePanel() {
+    if (!supabase) {
+      setBadge('Config Error', '#fee2e2', '#991b1b');
+      statusEl.textContent = 'Supabase client not found.';
+      return;
+    }
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      setBadge('Login Required', '#fef3c7', '#92400e');
+      statusEl.textContent = 'Please log in to verify your face for attendance.';
+      openCamBtn.disabled = true;
+      return;
+    }
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('face_verified, face_descriptor')
+      .eq('id', user.id)
+      .single();
+
+    const hasDescriptor = Array.isArray(profile?.face_descriptor) && profile.face_descriptor.length === 128;
+
+    const { data: studentRow } = await supabase
+      .from('students')
+      .select('id')
+      .eq('profile_id', user.id)
+      .maybeSingle();
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    let alreadyPresent = false;
+    if (studentRow?.id) {
+      const { data: todayAtt } = await supabase
+        .from('attendance')
+        .select('status')
+        .eq('student_id', studentRow.id)
+        .eq('attendance_date', todayStr)
+        .maybeSingle();
+      if (todayAtt && todayAtt.status === 'PRESENT') {
+        alreadyPresent = true;
+      }
+    }
+
+    if (alreadyPresent) {
+      setBadge('PRESENT Today', '#dcfce7', '#166534');
+      statusEl.textContent = "Today's attendance is already marked as PRESENT.";
+      return;
+    }
+
+    if (!hasDescriptor) {
+      setBadge('Face Not Enrolled', '#fef3c7', '#92400e');
+      statusEl.textContent = 'No 128D face descriptor found in your profile. Click "Enroll Face Now" to register your face.';
+      enrollDashBtn.style.display = 'inline-block';
+      return;
+    }
+
+    setBadge('Ready to Verify', '#e0f2fe', '#075985');
+    statusEl.textContent = 'Face biometric enrolled. Start camera and verify to mark PRESENT.';
+  }
+
+  openCamBtn?.addEventListener('click', async () => {
+    try {
+      statusEl.textContent = 'Starting camera & loading models...';
+      videoEl.style.display = 'block';
+      await startCameraStream(videoEl);
+      verifyBtn.disabled = false;
+      statusEl.textContent = 'Camera ready. Look straight at the camera and verify.';
+    } catch (err) {
+      statusEl.textContent = err.message;
+    }
+  });
+
+  verifyBtn?.addEventListener('click', async () => {
+    try {
+      verifyBtn.disabled = true;
+      statusEl.textContent = 'Matching face descriptor (Euclidean distance < 0.55)...';
+
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Session not found. Please log in again.');
+
+      const result = await verifyAndMarkAttendance({
+        supabase,
+        videoElement: videoEl,
+        profileId: user.id
+      });
+
+      statusEl.textContent = result.message;
+
+      if (result.matched) {
+        setBadge('PRESENT', '#dcfce7', '#166534');
+        stopCameraStream(videoEl);
+        videoEl.style.display = 'none';
+      } else {
+        setBadge('Not Matched', '#fee2e2', '#991b1b');
+        verifyBtn.disabled = false;
+      }
+    } catch (err) {
+      statusEl.textContent = err.message;
+      verifyBtn.disabled = false;
+    }
+  });
+
+  enrollDashBtn?.addEventListener('click', async () => {
+    try {
+      enrollDashBtn.disabled = true;
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Please log in first.');
+
+      videoEl.style.display = 'block';
+      await startCameraStream(videoEl);
+
+      const res = await enrollStudentFace({
+        supabase,
+        videoElement: videoEl,
+        profileId: user.id,
+        onProgress: (msg) => { statusEl.textContent = msg; }
+      });
+
+      stopCameraStream(videoEl);
+      videoEl.style.display = 'none';
+      enrollDashBtn.style.display = 'none';
+      setBadge('Ready to Verify', '#e0f2fe', '#075985');
+      statusEl.textContent = `${res.message} Now click "Start Camera" to verify & mark PRESENT.`;
+    } catch (err) {
+      statusEl.textContent = err.message;
+      enrollDashBtn.disabled = false;
+    }
+  });
+
+  initAttendancePanel();
+</script>
+</body></html>
