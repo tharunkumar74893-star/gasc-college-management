@@ -15,15 +15,64 @@
     activitiesText: 'Sports, NSS, cultural activities and student events.', slides: IMAGES, departments: {}
   };
 
+  const FACE_MATCH_THRESHOLD = 0.55;
+  const FACE_MODEL_URL = './models';
+  let faceModelsReady = false;
+
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const say = (el, msg, error = false) => { if (el) { el.textContent = msg; el.classList.toggle('error', error); } };
   const sb = window.supabase?.createClient(window.GASC_SUPABASE_URL, window.GASC_SUPABASE_ANON_KEY);
+  if (sb) window.supabaseClient = sb;
   let currentProfile = null;
   let cmsCache = {...DEFAULT_CMS};
 
   if (!sb) console.error('Supabase client not loaded. Check config.js and the Supabase CDN script.');
+
+  async function ensureFaceApiReady() {
+    if (!window.faceapi) {
+      throw new Error('face-api.js (v0.22.2) is not loaded on this page.');
+    }
+    if (!faceModelsReady) {
+      await Promise.all([
+        faceapi.nets.tinyFaceDetector.loadFromUri(FACE_MODEL_URL),
+        faceapi.nets.faceLandmark68Net.loadFromUri(FACE_MODEL_URL),
+        faceapi.nets.faceRecognitionNet.loadFromUri(FACE_MODEL_URL)
+      ]);
+      faceModelsReady = true;
+    }
+  }
+
+  async function captureLiveFaceDescriptor(videoEl) {
+    await ensureFaceApiReady();
+    const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.65 });
+    const detections = await faceapi.detectAllFaces(videoEl, opts).withFaceLandmarks().withFaceDescriptors();
+    if (!detections || detections.length === 0) {
+      throw new Error('No face detected. Please face the camera in good lighting.');
+    }
+    if (detections.length > 1) {
+      throw new Error('Multiple faces detected. Only one student should be in view.');
+    }
+    return detections[0].descriptor;
+  }
+
+  async function syncPendingFaceDescriptorToProfile(userId) {
+    try {
+      const raw = sessionStorage.getItem('gasc_pending_face_descriptor');
+      if (!raw || !userId) return;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed) || parsed.length !== 128) return;
+      await sb.from('profiles').update({
+        face_descriptor: parsed,
+        face_verified: true,
+        face_enrolled_at: new Date().toISOString()
+      }).eq('id', userId);
+      sessionStorage.removeItem('gasc_pending_face_descriptor');
+    } catch (e) {
+      console.warn('Could not sync pending face descriptor:', e);
+    }
+  }
 
   function header() {
     const h = $('#header'); if (!h) return;
@@ -101,6 +150,9 @@
         const {data, error} = await sb.auth.signUp({email, password, options:{data:metadata}});
         if (error) throw error;
         const user = data.user; if (!user) throw new Error('Account could not be created. Please try again.');
+        if (data.session) {
+          await syncPendingFaceDescriptorToProfile(user.id);
+        }
         if (metadata.bloodGroup && data.session) {
           const {error: bloodError} = await sb.from('profiles').update({blood_group: metadata.bloodGroup}).eq('id', user.id);
           if (bloodError) throw bloodError;
@@ -133,6 +185,7 @@
       try {
         const {data, error} = await sb.auth.signInWithPassword({email, password});
         if (error) throw error;
+        if (data.user?.id) await syncPendingFaceDescriptorToProfile(data.user.id);
         const {data:profile, error:profileError} = await sb.from('profiles').select('*').eq('id', data.user.id).single();
         if (profileError) throw new Error('Profile could not be loaded. Contact the college administrator.');
         if (profile.status !== 'active') { await sb.auth.signOut(); throw new Error(profile.status === 'rejected' ? 'Your registration was not approved. Contact the Admin.' : 'Your account is waiting for Admin approval.'); }
@@ -146,6 +199,7 @@
 
   async function getCurrentProfile() {
     const {data:{user}, error} = await sb.auth.getUser(); if (error || !user) return null;
+    await syncPendingFaceDescriptorToProfile(user.id);
     const {data, error:profileError} = await sb.from('profiles').select('*').eq('id', user.id).single();
     if (profileError) throw profileError; return data;
   }
@@ -227,9 +281,9 @@
 
   async function setupAttendanceModule(host, role) {
     const form=$('#attendance-session-form',host), roster=$('#attendance-roster',host), summary=$('#student-attendance-summary',host);
-    // Student self check-in is enabled only during the database-enforced IST window.
+    // Student check-in supports both existing RPC and face-api.js (< 0.55) verification into attendance table.
     if (summary) {
-      summary.innerHTML = `<p class="muted">Attendance is available automatically from 9:30 AM to 10:30 AM (IST). No staff session start is required. Face recognition is not enabled in this build; this check-in uses the signed-in student account.</p><button type="button" class="btn teal" id="student-self-attendance">Mark My Attendance</button><p id="student-attendance-msg" class="form-message"></p><div id="student-attendance-history"></div>`;
+      summary.innerHTML = `<p class="muted">Attendance is available automatically from 9:30 AM to 10:30 AM (IST). No staff session start is required. You can verify your face (&lt; 0.55) to record PRESENT.</p><div style="display:flex;gap:8px;flex-wrap:wrap;"><button type="button" class="btn teal" id="student-self-attendance">Mark My Attendance</button><button type="button" class="btn navy" id="student-face-attendance">Verify Face &amp; Mark PRESENT</button></div><video id="app-face-att-video" width="320" height="240" autoplay muted playsinline style="display:none;margin-top:10px;border-radius:8px;background:#000;"></video><p id="student-attendance-msg" class="form-message"></p><div id="student-attendance-history"></div>`;
       $('#student-self-attendance',summary).onclick=async()=>{
         const btn=$('#student-self-attendance',summary), msg=$('#student-attendance-msg',summary);
         btn.disabled=true; say(msg,'Checking attendance window…');
@@ -237,6 +291,47 @@
         if(error){say(msg,error.message,true);btn.disabled=false;return;}
         say(msg,data?.message || 'Attendance recorded.');
         await loadStudentAttendanceHistory($('#student-attendance-history',summary));
+      };
+      $('#student-face-attendance',summary).onclick=async()=>{
+        const btn=$('#student-face-attendance',summary), msg=$('#student-attendance-msg',summary), vid=$('#app-face-att-video',summary);
+        btn.disabled=true; say(msg,'Starting camera & face verification…');
+        let stream=null;
+        try {
+          const {data:prof,error:pErr}=await sb.from('profiles').select('face_descriptor').eq('id',currentProfile.id).single();
+          if(pErr || !Array.isArray(prof?.face_descriptor) || prof.face_descriptor.length!==128){
+            throw new Error('Face descriptor not registered. Please enroll face first.');
+          }
+          vid.style.display='block';
+          stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'},audio:false});
+          vid.srcObject=stream;
+          await new Promise(r=>{ vid.onloadedmetadata=()=>{ vid.play(); r(); }; });
+          const liveDesc=await captureLiveFaceDescriptor(vid);
+          const storedDesc=new Float32Array(prof.face_descriptor);
+          const dist=Number(faceapi.euclideanDistance(liveDesc,storedDesc).toFixed(4));
+          if(dist>=FACE_MATCH_THRESHOLD){
+            throw new Error(`Face mismatch (distance ${dist} >= ${FACE_MATCH_THRESHOLD}). Try again.`);
+          }
+          const {data:studentId,error:rpcErr}=await sb.rpc('get_or_create_student_id',{p_profile_id:currentProfile.id});
+          if(rpcErr || !studentId) throw new Error('Unable to map student ID.');
+          const today=new Date().toISOString().split('T')[0];
+          const {error:insErr}=await sb.from('attendance').upsert({
+            student_id:studentId,
+            attendance_date:today,
+            attendance_time:new Date().toISOString(),
+            status:'PRESENT',
+            verification_status:'FACE_VERIFIED',
+            match_distance:dist
+          },{onConflict:'student_id,attendance_date'});
+          if(insErr) throw new Error(insErr.message);
+          say(msg,`Face verified (distance: ${dist}). Attendance marked PRESENT!`);
+          await loadStudentAttendanceHistory($('#student-attendance-history',summary));
+        } catch(err){
+          say(msg,err.message || 'Face verification failed.',true);
+        } finally {
+          if(stream) stream.getTracks().forEach(t=>t.stop());
+          if(vid){ vid.srcObject=null; vid.style.display='none'; }
+          btn.disabled=false;
+        }
       };
       await loadStudentAttendanceHistory($('#student-attendance-history',summary));
     }
@@ -268,8 +363,6 @@
   function simpleTable(headers, rows) { return `<div class="table-scroll"><table class="data-table"><thead><tr>${headers.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(v=>`<td>${esc(v)}</td>`).join('')}</tr>`).join('')||`<tr><td colspan="${headers.length}">No records found.</td></tr>`}</tbody></table></div>`; }
   async function loadAttendanceRoster(host, session, role) {
     if (!host || !session) return;
-    // Use the SECURITY DEFINER roster function so Faculty/HOD do not need
-    // direct SELECT access to the protected profiles table.
     const { data: students, error } = await sb.rpc('get_attendance_student_roster', {
       p_department: session.department,
       p_academic_year: session.academic_year,
