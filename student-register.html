@@ -1,6 +1,5 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Student Registration | GASC</title><link rel="stylesheet" href="assets/style.css"></head><body><div id="header"></div><main class="auth-wrap"><form class="auth-card wide" id="registration-form" data-role="student"><span class="eyebrow">GASC PORTAL</span><h1>Student Registration</h1><p class="muted">Students can log in immediately after successful registration.</p><div class="form-grid"><label>Student Photo<input type="file" name="photo" accept="image/*"></label><label>Full Name<input required name="name"></label><label>Date of Birth<input required type="date" name="dob"></label><label>Gender<select required name="gender"><option value="">Select</option><option>Male</option><option>Female</option><option>Other</option></select></label><label>Roll Number<input required name="rollNumber"></label><label>University Registration Number<input required name="universityRegNo"></label><label>Degree<select required name="degree"><option value="">Select degree</option><option>B.A.</option><option>B.Sc.</option><option>B.Com.</option></select></label><label>Department<select required name="department"><option>B.A. Tamil</option><option>B.A. English</option><option>B.Sc. Computer Science</option><option>B.Sc. Mathematics</option><option>B.Com. Commerce</option></select></label><label>Current Semester<select required name="semester"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></label><label>Academic Year<input required name="academicYear" placeholder="2026-2027"></label><label>Admission Year<input required type="number" name="admissionYear" min="2000" max="2100"></label><label>Mobile Number<input required type="tel" name="mobile"></label><label>Email ID<input required type="email" name="email"></label><label>Father Name<input required name="fatherName"></label><label>Mother Name<input required name="motherName"></label><label>Residential Address<textarea required name="address" rows="2"></textarea></label><label>Physically Challenged<select name="physicallyChallenged"><option>No</option><option>Yes</option></select></label><label>Visually Challenged<select name="visuallyChallenged"><option>No</option><option>Yes</option></select></label><label>Blood Group<input name="bloodGroup" placeholder="e.g. O+"></label><label>Password<input required type="password" name="password" minlength="6"></label><label>Confirm Password<input required type="password" name="confirmPassword" minlength="6"></label></div>
 
-<!-- Face Attendance Biometric Capture Block (Add-on) -->
 <div id="face-capture-panel" style="margin:18px 0;padding:14px;border:1px solid #cbd5e1;border-radius:10px;background:#f8fafc;">
   <h3 style="margin:0 0 6px;font-size:16px;">Face Biometric Registration (For Attendance)</h3>
   <p id="face-enroll-status" class="muted" style="margin:0 0 10px;font-size:13px;">Start camera and capture your face to generate 128D face descriptor.</p>
@@ -17,95 +16,136 @@
 <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
 <script src="assets/config.js"></script>
 <script src="assets/app.js"></script>
-<script type="module">
-  import {
-    startCameraStream,
-    stopCameraStream,
-    enrollStudentFace
-  } from './assets/face-attendance.js';
+<script>
+(() => {
+  const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
+  let modelsLoaded = false;
+  let camStream = null;
 
-  const supabaseUrl = window.GASC_SUPABASE_URL;
-  const supabaseKey = window.GASC_SUPABASE_ANON_KEY;
-  const supabase = (window.supabase && window.supabase.createClient && supabaseUrl && supabaseKey)
-    ? window.supabase.createClient(supabaseUrl, supabaseKey)
-    : (window.supabaseClient || null);
-
-  const form = document.getElementById('registration-form');
-  const videoEl = document.getElementById('reg-face-video');
-  const statusEl = document.getElementById('face-enroll-status');
   const startCamBtn = document.getElementById('btn-start-reg-cam');
   const captureBtn = document.getElementById('btn-capture-reg-face');
+  const videoEl = document.getElementById('reg-face-video');
+  const statusEl = document.getElementById('face-enroll-status');
+  const regForm = document.getElementById('registration-form');
 
-  window.gascCapturedFaceReady = false;
+  function getSbClient() {
+    if (window.supabaseClient) return window.supabaseClient;
+    if (window.supabase && window.GASC_SUPABASE_URL && window.GASC_SUPABASE_ANON_KEY) {
+      window.supabaseClient = window.supabase.createClient(window.GASC_SUPABASE_URL, window.GASC_SUPABASE_ANON_KEY);
+      return window.supabaseClient;
+    }
+    return null;
+  }
+
+  async function ensureModels() {
+    if (modelsLoaded) return;
+    if (!window.faceapi) throw new Error('face-api.js (v0.22.2) script failed to load.');
+    statusEl.textContent = 'Loading face recognition models...';
+    await Promise.all([
+      faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+      faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+      faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+    ]);
+    modelsLoaded = true;
+  }
+
+  function stopCam() {
+    if (camStream) {
+      camStream.getTracks().forEach(t => t.stop());
+      camStream = null;
+    }
+    if (videoEl) {
+      videoEl.srcObject = null;
+      videoEl.style.display = 'none';
+    }
+  }
 
   startCamBtn?.addEventListener('click', async () => {
     try {
-      statusEl.textContent = 'Opening camera & loading face models...';
+      startCamBtn.disabled = true;
+      statusEl.textContent = 'Requesting camera permission...';
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Camera not supported in this browser or needs HTTPS.');
+      }
+      camStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false
+      });
+      videoEl.srcObject = camStream;
       videoEl.style.display = 'block';
-      await startCameraStream(videoEl);
+      await new Promise((resolve, reject) => {
+        videoEl.onloadedmetadata = async () => {
+          try { await videoEl.play(); resolve(); } catch (e) { reject(e); }
+        };
+      });
       captureBtn.disabled = false;
-      statusEl.textContent = 'Camera active. Keep one face centered and click "Capture Face".';
+      statusEl.textContent = 'Camera ready. Keep one face clearly visible and tap "Capture Face".';
     } catch (err) {
-      statusEl.textContent = err.message;
+      statusEl.textContent = 'Camera error: ' + (err.message || 'Permission denied or camera busy.');
+    } finally {
+      startCamBtn.disabled = false;
     }
   });
 
   captureBtn?.addEventListener('click', async () => {
     try {
       captureBtn.disabled = true;
-      if (!supabase) throw new Error('Supabase client not initialized.');
+      await ensureModels();
+      statusEl.textContent = 'Scanning face to generate 128D descriptor...';
+      const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.6 });
+      const dets = await faceapi.detectAllFaces(videoEl, opts).withFaceLandmarks().withFaceDescriptors();
+      if (!dets || dets.length === 0) throw new Error('No face detected. Please face the camera in good light.');
+      if (dets.length > 1) throw new Error('Multiple faces detected. Only one student should be in frame.');
 
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        // Save temporary pending flag; once user signs in / registers, save descriptor right after
-        sessionStorage.setItem('gasc_pending_face_enroll', '1');
-        window.gascCapturedFaceReady = true;
-        statusEl.textContent = 'Face captured! Will link to your profile right after registration/login.';
-        stopCameraStream(videoEl);
-        videoEl.style.display = 'none';
-        return;
+      const descriptorArr = Array.from(dets[0].descriptor).map(n => Number(Number(n).toFixed(8)));
+      sessionStorage.setItem('gasc_pending_face_descriptor', JSON.stringify(descriptorArr));
+
+      const sb = getSbClient();
+      if (sb) {
+        const { data: { user } } = await sb.auth.getUser();
+        if (user) {
+          await sb.rpc('get_or_create_student_id', { p_profile_id: user.id });
+          const { error: upErr } = await sb.from('profiles').update({
+            face_descriptor: descriptorArr,
+            face_verified: true,
+            face_enrolled_at: new Date().toISOString()
+          }).eq('id', user.id);
+          if (upErr) throw new Error(upErr.message);
+          sessionStorage.removeItem('gasc_pending_face_descriptor');
+          statusEl.textContent = 'Face biometric (128D) saved to profile!';
+          stopCam();
+          return;
+        }
       }
 
-      const res = await enrollStudentFace({
-        supabase,
-        videoElement: videoEl,
-        profileId: user.id,
-        onProgress: (msg) => { statusEl.textContent = msg; }
-      });
-
-      window.gascCapturedFaceReady = true;
-      statusEl.textContent = res.message;
-      stopCameraStream(videoEl);
-      videoEl.style.display = 'none';
+      statusEl.textContent = 'Face captured (128D)! Will be saved to profile upon registration/login.';
+      stopCam();
     } catch (err) {
-      statusEl.textContent = err.message;
+      statusEl.textContent = err.message || 'Face capture failed.';
       captureBtn.disabled = false;
     }
   });
 
-  // After existing app.js handles form submit, if session exists and pending flag is set, complete DB save
-  form?.addEventListener('submit', async () => {
-    if (!supabase || sessionStorage.getItem('gasc_pending_face_enroll') !== '1') return;
-
+  regForm?.addEventListener('submit', () => {
     setTimeout(async () => {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user && videoEl) {
-          await startCameraStream(videoEl);
-          await enrollStudentFace({
-            supabase,
-            videoElement: videoEl,
-            profileId: user.id,
-            onProgress: (msg) => { statusEl.textContent = msg; }
-          });
-          sessionStorage.removeItem('gasc_pending_face_enroll');
-          stopCameraStream(videoEl);
-          videoEl.style.display = 'none';
+        const raw = sessionStorage.getItem('gasc_pending_face_descriptor');
+        const sb = getSbClient();
+        if (!raw || !sb) return;
+        const arr = JSON.parse(raw);
+        const { data: { user } } = await sb.auth.getUser();
+        if (user && Array.isArray(arr) && arr.length === 128) {
+          await sb.rpc('get_or_create_student_id', { p_profile_id: user.id });
+          await sb.from('profiles').update({
+            face_descriptor: arr,
+            face_verified: true,
+            face_enrolled_at: new Date().toISOString()
+          }).eq('id', user.id);
+          sessionStorage.removeItem('gasc_pending_face_descriptor');
         }
-      } catch (_) {
-        // Silent fallback if email confirmation is required before session creation
-      }
-    }, 1500);
+      } catch (_) {}
+    }, 1800);
   });
+})();
 </script>
 </body></html>
