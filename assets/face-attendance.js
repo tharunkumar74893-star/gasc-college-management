@@ -7,7 +7,7 @@
  */
 
 const FACE_ATTENDANCE_CONFIG = {
-  MODEL_URL: 'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights',
+  MODEL_URL: 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model'
   MATCH_THRESHOLD: 0.55,
   MIN_CONFIDENCE: 0.65,
   ENROLL_SAMPLES: 3,
