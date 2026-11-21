@@ -16,7 +16,7 @@
   };
 
   const FACE_MATCH_THRESHOLD = 0.55;
-  const FACE_MODEL_URL = './models';
+  const FACE_MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
   let faceModelsReady = false;
 
   const $ = (s, r = document) => r.querySelector(s);
