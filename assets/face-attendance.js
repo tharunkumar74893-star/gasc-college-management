@@ -2,11 +2,12 @@
  * GASC College Management System - Face Attendance Module
  * File path : assets/face-attendance.js
  * Tech      : HTML5, Vanilla JS (ES6+), Supabase JS v2, face-api.js (v0.22.2)
+ * Weights   : Loaded directly from jsDelivr CDN (v0.22.2/weights)
  * Threshold : faceapi.euclideanDistance(liveDescriptor, storedDescriptor) < 0.55
  */
 
 const FACE_ATTENDANCE_CONFIG = {
-  MODEL_URL: './models',
+  MODEL_URL: 'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights',
   MATCH_THRESHOLD: 0.55,
   MIN_CONFIDENCE: 0.65,
   ENROLL_SAMPLES: 3,
@@ -17,7 +18,7 @@ const FACE_ATTENDANCE_CONFIG = {
 let isModelsLoaded = false;
 
 /**
- * Load face-api.js v0.22.2 weights once from MODEL_URL
+ * Load face-api.js v0.22.2 weights once from CDN MODEL_URL
  */
 export async function loadFaceModels(modelUrl = FACE_ATTENDANCE_CONFIG.MODEL_URL) {
   if (isModelsLoaded) return true;
@@ -161,7 +162,6 @@ export async function enrollStudentFace({ supabase, videoElement, profileId, onP
     };
   }
 
-  // Ensure student row exists in `students` table
   const { error: rpcErr } = await supabase.rpc('get_or_create_student_id', {
     p_profile_id: profileId
   });
@@ -205,7 +205,6 @@ export async function verifyAndMarkAttendance({ supabase, videoElement, profileI
     throw new Error('Logged-in student profile ID is missing.');
   }
 
-  // 1. Fetch stored 128D face_descriptor from `profiles`
   const { data: profile, error: profileErr } = await supabase
     .from('profiles')
     .select('id, name, roll_number, face_descriptor')
@@ -220,11 +219,9 @@ export async function verifyAndMarkAttendance({ supabase, videoElement, profileI
     throw new Error('No 128D face descriptor found in your profile. Please enroll your face first.');
   }
 
-  // 2. Capture live 128D descriptor from webcam
   const liveDescriptor = await extractSingleFaceDescriptor(videoElement);
   const storedDescriptor = new Float32Array(profile.face_descriptor);
 
-  // 3. Calculate Euclidean distance (threshold < 0.55)
   const rawDistance = faceapi.euclideanDistance(liveDescriptor, storedDescriptor);
   const distance = Number(rawDistance.toFixed(4));
 
@@ -238,7 +235,6 @@ export async function verifyAndMarkAttendance({ supabase, videoElement, profileI
     };
   }
 
-  // 4. Resolve bigint student_id from `students` table
   const { data: studentId, error: studentErr } = await supabase.rpc('get_or_create_student_id', {
     p_profile_id: profileId
   });
@@ -247,7 +243,6 @@ export async function verifyAndMarkAttendance({ supabase, videoElement, profileI
     throw new Error(`Unable to find student record: ${studentErr?.message || 'Unknown error'}`);
   }
 
-  // 5. Check existing attendance for today
   const todayDate = new Date().toISOString().split('T')[0];
 
   const { data: existingRecord, error: selectErr } = await supabase
@@ -272,7 +267,6 @@ export async function verifyAndMarkAttendance({ supabase, videoElement, profileI
     };
   }
 
-  // 6. Insert / Upsert PRESENT record into `attendance` table
   const nowIso = new Date().toISOString();
 
   const { data: savedRecord, error: upsertErr } = await supabase
