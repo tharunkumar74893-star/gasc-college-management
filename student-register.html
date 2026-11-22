@@ -102,7 +102,8 @@
 
       const sb = getSbClient();
       if (sb) {
-        const { data: { user } } = await sb.auth.getUser();
+        const { data: { session } } = await sb.auth.getSession();
+        const user = session?.user;
         if (user) {
           await sb.rpc('get_or_create_student_id', { p_profile_id: user.id });
           const { error: upErr } = await sb.from('profiles').update({
@@ -118,7 +119,7 @@
         }
       }
 
-      statusEl.textContent = 'Face captured (128D)! Will be saved to profile upon registration/login.';
+      statusEl.textContent = 'Face captured (128D)! It will be saved to your profile right after registration/login.';
       stopCam();
     } catch (err) {
       statusEl.textContent = err.message || 'Face capture failed.';
@@ -133,7 +134,8 @@
         const sb = getSbClient();
         if (!raw || !sb) return;
         const arr = JSON.parse(raw);
-        const { data: { user } } = await sb.auth.getUser();
+        const { data: { session } } = await sb.auth.getSession();
+        const user = session?.user;
         if (user && Array.isArray(arr) && arr.length === 128) {
           await sb.rpc('get_or_create_student_id', { p_profile_id: user.id });
           await sb.from('profiles').update({
