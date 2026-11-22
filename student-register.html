@@ -26,16 +26,6 @@
   const captureBtn = document.getElementById('btn-capture-reg-face');
   const videoEl = document.getElementById('reg-face-video');
   const statusEl = document.getElementById('face-enroll-status');
-  const regForm = document.getElementById('registration-form');
-
-  function getSbClient() {
-    if (window.supabaseClient) return window.supabaseClient;
-    if (window.supabase && window.GASC_SUPABASE_URL && window.GASC_SUPABASE_ANON_KEY) {
-      window.supabaseClient = window.supabase.createClient(window.GASC_SUPABASE_URL, window.GASC_SUPABASE_ANON_KEY);
-      return window.supabaseClient;
-    }
-    return null;
-  }
 
   async function ensureModels() {
     if (modelsLoaded) return;
@@ -63,10 +53,7 @@
   startCamBtn?.addEventListener('click', async () => {
     try {
       startCamBtn.disabled = true;
-      statusEl.textContent = 'Requesting camera permission...';
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error('Camera not supported in this browser or needs HTTPS.');
-      }
+      statusEl.textContent = 'Starting camera...';
       camStream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
         audio: false
@@ -79,9 +66,9 @@
         };
       });
       captureBtn.disabled = false;
-      statusEl.textContent = 'Camera ready. Keep one face clearly visible and tap "Capture Face".';
+      statusEl.textContent = 'Camera ready. Keep face clearly visible and tap "Capture Face".';
     } catch (err) {
-      statusEl.textContent = 'Camera error: ' + (err.message || 'Permission denied or camera busy.');
+      statusEl.textContent = 'Camera error: ' + (err.message || 'Permission denied.');
     } finally {
       startCamBtn.disabled = false;
     }
@@ -91,62 +78,20 @@
     try {
       captureBtn.disabled = true;
       await ensureModels();
-      statusEl.textContent = 'Scanning face to generate 128D descriptor...';
+      statusEl.textContent = 'Generating 128D face descriptor...';
       const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.6 });
       const dets = await faceapi.detectAllFaces(videoEl, opts).withFaceLandmarks().withFaceDescriptors();
-      if (!dets || dets.length === 0) throw new Error('No face detected. Please face the camera in good light.');
+      if (!dets || dets.length === 0) throw new Error('No face detected. Face the camera in good light.');
       if (dets.length > 1) throw new Error('Multiple faces detected. Only one student should be in frame.');
 
       const descriptorArr = Array.from(dets[0].descriptor).map(n => Number(Number(n).toFixed(8)));
       sessionStorage.setItem('gasc_pending_face_descriptor', JSON.stringify(descriptorArr));
-
-      const sb = getSbClient();
-      if (sb) {
-        const { data: { session } } = await sb.auth.getSession();
-        const user = session?.user;
-        if (user) {
-          await sb.rpc('get_or_create_student_id', { p_profile_id: user.id });
-          const { error: upErr } = await sb.from('profiles').update({
-            face_descriptor: descriptorArr,
-            face_verified: true,
-            face_enrolled_at: new Date().toISOString()
-          }).eq('id', user.id);
-          if (upErr) throw new Error(upErr.message);
-          sessionStorage.removeItem('gasc_pending_face_descriptor');
-          statusEl.textContent = 'Face biometric (128D) saved to profile!';
-          stopCam();
-          return;
-        }
-      }
-
-      statusEl.textContent = 'Face captured (128D)! It will be saved to your profile right after registration/login.';
+      statusEl.textContent = 'Face captured (128D)! Submit registration and log in to link to profile.';
       stopCam();
     } catch (err) {
       statusEl.textContent = err.message || 'Face capture failed.';
       captureBtn.disabled = false;
     }
-  });
-
-  regForm?.addEventListener('submit', () => {
-    setTimeout(async () => {
-      try {
-        const raw = sessionStorage.getItem('gasc_pending_face_descriptor');
-        const sb = getSbClient();
-        if (!raw || !sb) return;
-        const arr = JSON.parse(raw);
-        const { data: { session } } = await sb.auth.getSession();
-        const user = session?.user;
-        if (user && Array.isArray(arr) && arr.length === 128) {
-          await sb.rpc('get_or_create_student_id', { p_profile_id: user.id });
-          await sb.from('profiles').update({
-            face_descriptor: arr,
-            face_verified: true,
-            face_enrolled_at: new Date().toISOString()
-          }).eq('id', user.id);
-          sessionStorage.removeItem('gasc_pending_face_descriptor');
-        }
-      } catch (_) {}
-    }, 1800);
   });
 })();
 </script>
