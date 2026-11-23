@@ -253,18 +253,9 @@
         return;
       }
 
-      const { data: studentId, error: rpcErr } = await sb.rpc('get_or_create_student_id', { p_profile_id: user.id });
-      if (rpcErr || !studentId) throw new Error('Unable to find student record.');
-
-      const todayStr = new Date().toISOString().split('T')[0];
-      const { error: attErr } = await sb.from('attendance').upsert({
-        student_id: studentId,
-        attendance_date: todayStr,
-        attendance_time: new Date().toISOString(),
-        status: 'PRESENT',
-        verification_status: 'FACE_VERIFIED',
-        match_distance: dist
-      }, { onConflict: 'student_id,attendance_date' });
+      const { error: attErr } = await sb.rpc('mark_face_attendance', {
+        p_match_distance: dist
+      });
 
       if (attErr) throw new Error(attErr.message);
 
