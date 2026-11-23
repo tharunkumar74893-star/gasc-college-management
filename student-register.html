@@ -26,6 +26,7 @@
   const captureBtn = document.getElementById('btn-capture-reg-face');
   const videoEl = document.getElementById('reg-face-video');
   const statusEl = document.getElementById('face-enroll-status');
+  const regForm = document.getElementById('registration-form');
 
   async function ensureModels() {
     if (modelsLoaded) return;
@@ -85,8 +86,14 @@
       if (dets.length > 1) throw new Error('Multiple faces detected. Only one student should be in frame.');
 
       const descriptorArr = Array.from(dets[0].descriptor).map(n => Number(Number(n).toFixed(8)));
-      sessionStorage.setItem('gasc_pending_face_descriptor', JSON.stringify(descriptorArr));
-      statusEl.textContent = 'Face captured (128D)! Submit registration and log in to link to profile.';
+      const emailVal = String(regForm?.elements?.email?.value || '').trim().toLowerCase();
+
+      localStorage.setItem('gasc_pending_face_descriptor', JSON.stringify(descriptorArr));
+      if (emailVal) {
+        localStorage.setItem('gasc_pending_face_' + emailVal, JSON.stringify(descriptorArr));
+      }
+
+      statusEl.textContent = 'Face captured (128D)! Submit registration and log in — it will link automatically.';
       stopCam();
     } catch (err) {
       statusEl.textContent = err.message || 'Face capture failed.';
