@@ -320,7 +320,7 @@
 
   async function setupAttendanceModule(host, role) {
     const roster=$('#attendance-roster',host), summary=$('#student-attendance-summary',host);
-    // Student attendance is recorded strictly after face verification (Euclidean distance < 0.55).
+    // Student attendance is recorded strictly after face verification (Euclidean distance < 0.55) via mark_face_attendance RPC.
     if (summary) {
       summary.innerHTML = `<p class="muted">Attendance is marked <strong>PRESENT</strong> only after live face verification (Euclidean distance &lt; 0.55).</p><div style="display:flex;gap:8px;flex-wrap:wrap;"><button type="button" class="btn navy" id="student-face-attendance">Verify Face &amp; Mark PRESENT</button></div><video id="app-face-att-video" width="320" height="240" autoplay muted playsinline style="display:none;margin-top:10px;border-radius:8px;background:#000;"></video><p id="student-attendance-msg" class="form-message"></p><div id="student-attendance-history"></div>`;
       $('#student-face-attendance',summary).onclick=async()=>{
@@ -342,17 +342,9 @@
           if(dist>=FACE_MATCH_THRESHOLD){
             throw new Error(`Face mismatch (distance ${dist} >= ${FACE_MATCH_THRESHOLD}). PRESENT not marked.`);
           }
-          const {data:studentId,error:rpcErr}=await sb.rpc('get_or_create_student_id',{p_profile_id:currentProfile.id});
-          if(rpcErr || !studentId) throw new Error('Unable to map student ID.');
-          const today=new Date().toISOString().split('T')[0];
-          const {error:insErr}=await sb.from('attendance').upsert({
-            student_id:studentId,
-            attendance_date:today,
-            attendance_time:new Date().toISOString(),
-            status:'PRESENT',
-            verification_status:'FACE_VERIFIED',
-            match_distance:dist
-          },{onConflict:'student_id,attendance_date'});
+          const {error:insErr}=await sb.rpc('mark_face_attendance',{
+            p_match_distance:dist
+          });
           if(insErr) throw new Error(insErr.message);
           say(msg,`Face verified (distance: ${dist}). Attendance marked PRESENT!`);
           await loadStudentAttendanceHistory($('#student-attendance-history',summary));
@@ -421,8 +413,8 @@
     const form=$('#timetable-form',host), list=$('#timetable-list',host);
     const dayToNumber={Monday:1,Tuesday:2,Wednesday:3,Thursday:4,Friday:5,Saturday:6};
     const numberToDay={1:'Monday',2:'Tuesday',3:'Wednesday',4:'Thursday',5:'Friday',6:'Saturday',0:'Sunday'};
-    const load=async()=>{let q=sb.from('timetable_entries').select('*').order('day_of_week').order('start_time');if(role!=='admin')q=q.eq('department',currentProfile.department);const {data,error}=await q.limit(250);if(error){list.innerHTML=`<p class="error">${esc(error.message)}</p>`;return;}list.innerHTML=simpleTable(['Day','Time','Period','Section','Subject','Faculty','Room'],(data||[]).map(x=>[numberToDay[Number(x.day_of_week)]||String(x.day_of_week),`${x.start_time}–${x.end_time}`,x.period_label,x.section||'A',x.subject,x.faculty_name,x.room||'—']));};
-    if(form)form.onsubmit=async e=>{e.preventDefault();const f=new FormData(form),payload=Object.fromEntries(f.entries());payload.day_of_week=Number(dayToNumber[payload.day_of_week]??payload.day_of_week);if(!Number.isInteger(payload.day_of_week)||payload.day_of_week<1||payload.day_of_week>6){say($('#timetable-msg',host),'Choose a valid day (Monday–Saturday).',true);return;}payload.created_by=currentProfile.id;const {error}=await sb.from('timetable_entries').insert(payload);say($('#timetable-msg',host),error?error.message:'Timetable entry saved.',!!error);if(!error){form.reset();await load();}};
+    const load=async()=>{let q=sb.from('timetable_entries').select('*').order('day_of_week').order('start_time');if(role!=='admin')q=q.eq('department',currentProfile.department);const {data,error}=await q.limit(250);if(error){list.innerHTML=`<p class="error">${esc(error.message)}</p>`;return;}list.innerHTML=simpleTable(['Day','Time','Period','Section','Subject','Faculty','Room'],(data||[]).map(x=>[numberToDay[Number(x.day_of_week)]||String(x.day_of_week),`${x.start_time}–${x.end_time}`,x.period_label||x.period||'—',x.section||'A',x.subject,x.faculty_name,x.room||'—']));};
+    if(form)form.onsubmit=async e=>{e.preventDefault();const f=new FormData(form),payload=Object.fromEntries(f.entries());payload.day_of_week=Number(dayToNumber[payload.day_of_week]??payload.day_of_week);if(!Number.isInteger(payload.day_of_week)||payload.day_of_week<1||payload.day_of_week>6){say($('#timetable-msg',host),'Choose a valid day (Monday–Saturday).',true);return;}payload.period=payload.period_label;payload.created_by=currentProfile.id;const {error}=await sb.from('timetable_entries').insert(payload);say($('#timetable-msg',host),error?error.message:'Timetable entry saved.',!!error);if(!error){form.reset();await load();}};
     await load();
   }
   async function setupLeaveModule(host, role) {
