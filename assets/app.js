@@ -57,18 +57,53 @@
     return detections[0].descriptor;
   }
 
-  async function syncPendingFaceDescriptorToProfile(userId) {
+  function readPendingFaceDescriptor(userEmail) {
+    const keys = [];
+    if (userEmail) keys.push('gasc_pending_face_' + String(userEmail).trim().toLowerCase());
+    keys.push('gasc_pending_face_descriptor');
+    for (const k of keys) {
+      const raw = localStorage.getItem(k) || sessionStorage.getItem(k);
+      if (!raw) continue;
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length === 128) {
+          return parsed;
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  function clearPendingFaceKeys(userEmail) {
+    localStorage.removeItem('gasc_pending_face_descriptor');
+    sessionStorage.removeItem('gasc_pending_face_descriptor');
+    if (userEmail) {
+      const k = 'gasc_pending_face_' + String(userEmail).trim().toLowerCase();
+      localStorage.removeItem(k);
+      sessionStorage.removeItem(k);
+    }
+  }
+
+  async function syncPendingFaceDescriptorToProfile(userId, userEmail = '') {
     try {
-      const raw = sessionStorage.getItem('gasc_pending_face_descriptor');
-      if (!raw || !userId) return;
-      const parsed = JSON.parse(raw);
+      if (!userId) return;
+      const parsed = readPendingFaceDescriptor(userEmail);
       if (!Array.isArray(parsed) || parsed.length !== 128) return;
-      await sb.from('profiles').update({
-        face_descriptor: parsed,
-        face_verified: true,
-        face_enrolled_at: new Date().toISOString()
-      }).eq('id', userId);
-      sessionStorage.removeItem('gasc_pending_face_descriptor');
+
+      const { error: rpcErr } = await sb.rpc('save_my_face_descriptor', {
+        p_descriptor: parsed
+      });
+
+      if (rpcErr) {
+        const { error: upErr } = await sb.from('profiles').update({
+          face_descriptor: parsed,
+          face_verified: true,
+          face_enrolled_at: new Date().toISOString()
+        }).eq('id', userId);
+        if (upErr) throw upErr;
+      }
+
+      clearPendingFaceKeys(userEmail);
     } catch (e) {
       console.warn('Could not sync pending face descriptor:', e);
     }
@@ -142,6 +177,10 @@
       const role = form.dataset.role;
       if (!['student','faculty','hod'].includes(role)) return say(msg, 'Invalid registration role.', true);
       const email = String(fd.get('email') || '').trim().toLowerCase();
+      const pendingDesc = readPendingFaceDescriptor(email);
+      if (pendingDesc && email) {
+        localStorage.setItem('gasc_pending_face_' + email, JSON.stringify(pendingDesc));
+      }
       const photo = fd.get('photo'); const metadata = {};
       for (const [key, value] of fd.entries()) if (!['password','confirmPassword','photo','email'].includes(key) && typeof value === 'string') metadata[key] = value;
       metadata.role = role;
@@ -151,7 +190,7 @@
         if (error) throw error;
         const user = data.user; if (!user) throw new Error('Account could not be created. Please try again.');
         if (data.session) {
-          await syncPendingFaceDescriptorToProfile(user.id);
+          await syncPendingFaceDescriptorToProfile(user.id, email);
         }
         if (metadata.bloodGroup && data.session) {
           const {error: bloodError} = await sb.from('profiles').update({blood_group: metadata.bloodGroup}).eq('id', user.id);
@@ -185,7 +224,7 @@
       try {
         const {data, error} = await sb.auth.signInWithPassword({email, password});
         if (error) throw error;
-        if (data.user?.id) await syncPendingFaceDescriptorToProfile(data.user.id);
+        if (data.user?.id) await syncPendingFaceDescriptorToProfile(data.user.id, email);
         const {data:profile, error:profileError} = await sb.from('profiles').select('*').eq('id', data.user.id).single();
         if (profileError) throw new Error('Profile could not be loaded. Contact the college administrator.');
         if (profile.status !== 'active') { await sb.auth.signOut(); throw new Error(profile.status === 'rejected' ? 'Your registration was not approved. Contact the Admin.' : 'Your account is waiting for Admin approval.'); }
@@ -199,7 +238,7 @@
 
   async function getCurrentProfile() {
     const {data:{user}, error} = await sb.auth.getUser(); if (error || !user) return null;
-    await syncPendingFaceDescriptorToProfile(user.id);
+    await syncPendingFaceDescriptorToProfile(user.id, user.email || '');
     const {data, error:profileError} = await sb.from('profiles').select('*').eq('id', user.id).single();
     if (profileError) throw profileError; return data;
   }
@@ -280,18 +319,10 @@
   }
 
   async function setupAttendanceModule(host, role) {
-    const form=$('#attendance-session-form',host), roster=$('#attendance-roster',host), summary=$('#student-attendance-summary',host);
-    // Student check-in supports both existing RPC and face-api.js (< 0.55) verification into attendance table.
+    const roster=$('#attendance-roster',host), summary=$('#student-attendance-summary',host);
+    // Student attendance is recorded strictly after face verification (Euclidean distance < 0.55).
     if (summary) {
-      summary.innerHTML = `<p class="muted">Attendance is available automatically from 9:30 AM to 10:30 AM (IST). No staff session start is required. You can verify your face (&lt; 0.55) to record PRESENT.</p><div style="display:flex;gap:8px;flex-wrap:wrap;"><button type="button" class="btn teal" id="student-self-attendance">Mark My Attendance</button><button type="button" class="btn navy" id="student-face-attendance">Verify Face &amp; Mark PRESENT</button></div><video id="app-face-att-video" width="320" height="240" autoplay muted playsinline style="display:none;margin-top:10px;border-radius:8px;background:#000;"></video><p id="student-attendance-msg" class="form-message"></p><div id="student-attendance-history"></div>`;
-      $('#student-self-attendance',summary).onclick=async()=>{
-        const btn=$('#student-self-attendance',summary), msg=$('#student-attendance-msg',summary);
-        btn.disabled=true; say(msg,'Checking attendance window…');
-        const {data,error}=await sb.rpc('mark_my_attendance');
-        if(error){say(msg,error.message,true);btn.disabled=false;return;}
-        say(msg,data?.message || 'Attendance recorded.');
-        await loadStudentAttendanceHistory($('#student-attendance-history',summary));
-      };
+      summary.innerHTML = `<p class="muted">Attendance is marked <strong>PRESENT</strong> only after live face verification (Euclidean distance &lt; 0.55).</p><div style="display:flex;gap:8px;flex-wrap:wrap;"><button type="button" class="btn navy" id="student-face-attendance">Verify Face &amp; Mark PRESENT</button></div><video id="app-face-att-video" width="320" height="240" autoplay muted playsinline style="display:none;margin-top:10px;border-radius:8px;background:#000;"></video><p id="student-attendance-msg" class="form-message"></p><div id="student-attendance-history"></div>`;
       $('#student-face-attendance',summary).onclick=async()=>{
         const btn=$('#student-face-attendance',summary), msg=$('#student-attendance-msg',summary), vid=$('#app-face-att-video',summary);
         btn.disabled=true; say(msg,'Starting camera & face verification…');
@@ -309,7 +340,7 @@
           const storedDesc=new Float32Array(prof.face_descriptor);
           const dist=Number(faceapi.euclideanDistance(liveDesc,storedDesc).toFixed(4));
           if(dist>=FACE_MATCH_THRESHOLD){
-            throw new Error(`Face mismatch (distance ${dist} >= ${FACE_MATCH_THRESHOLD}). Try again.`);
+            throw new Error(`Face mismatch (distance ${dist} >= ${FACE_MATCH_THRESHOLD}). PRESENT not marked.`);
           }
           const {data:studentId,error:rpcErr}=await sb.rpc('get_or_create_student_id',{p_profile_id:currentProfile.id});
           if(rpcErr || !studentId) throw new Error('Unable to map student ID.');
