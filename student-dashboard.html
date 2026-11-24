@@ -1,276 +1,32 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Student Dashboard | GASC</title><link rel="stylesheet" href="assets/style.css"></head><body data-page="student-dashboard"><div id="header"></div><main class="wrap section"><div class="dashboard-heading"><div><span class="eyebrow">GASC PORTAL</span><h1>Student Dashboard</h1><p class="muted">Welcome to your student workspace.</p></div><button class="btn outline" id="logout">Logout</button></div><div id="dashboard-content"></div>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Student Dashboard | GASC</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-page="student-dashboard">
+  <div id="header"></div>
 
-<section id="gasc-face-attendance-section" style="margin-top:24px;padding:18px;border:1px solid #cbd5e1;border-radius:12px;background:#ffffff;">
-  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-    <div>
-      <h2 style="margin:0 0 4px;font-size:18px;">Face Attendance Verification</h2>
-      <p class="muted" style="margin:0;font-size:13px;">Attendance is marked PRESENT only after live face verification (distance &lt; 0.55).</p>
+  <main class="wrap section">
+    <div class="dashboard-heading">
+      <div>
+        <span class="eyebrow">GASC PORTAL</span>
+        <h1>Student Dashboard</h1>
+        <p class="muted">Welcome to your student workspace.</p>
+      </div>
+      <button class="btn outline" id="logout">Logout</button>
     </div>
-    <span id="gasc-att-badge" style="padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;background:#f1f5f9;color:#334155;">Checking...</span>
-  </div>
 
-  <div style="margin-top:14px;">
-    <video id="att-face-video" width="320" height="240" autoplay muted playsinline style="display:none;border-radius:8px;background:#000;margin-bottom:10px;"></video>
-    <p id="gasc-att-status" style="margin:6px 0 12px;font-size:14px;color:#334155;">Initializing biometric profile...</p>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;">
-      <button type="button" class="btn teal" id="btn-open-att-cam">Start Camera</button>
-      <button type="button" class="btn" id="btn-verify-att-face" disabled>Verify Face &amp; Mark PRESENT</button>
-      <button type="button" class="btn outline" id="btn-enroll-att-face" disabled>Enroll / Re-enroll Face</button>
-    </div>
-  </div>
-</section>
-</main><div id="footer"></div>
+    <div id="dashboard-content"></div>
+  </main>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
-<script src="assets/config.js"></script>
-<script src="assets/app.js"></script>
-<script>
-(() => {
-  const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
-  const THRESHOLD = 0.55;
-  let modelsLoaded = false;
-  let camStream = null;
+  <div id="footer"></div>
 
-  const videoEl = document.getElementById('att-face-video');
-  const statusEl = document.getElementById('gasc-att-status');
-  const badgeEl = document.getElementById('gasc-att-badge');
-  const openCamBtn = document.getElementById('btn-open-att-cam');
-  const verifyBtn = document.getElementById('btn-verify-att-face');
-  const enrollBtn = document.getElementById('btn-enroll-att-face');
-
-  function getSbClient() {
-    if (window.supabaseClient) return window.supabaseClient;
-    if (window.supabase && window.GASC_SUPABASE_URL && window.GASC_SUPABASE_ANON_KEY) {
-      window.supabaseClient = window.supabase.createClient(window.GASC_SUPABASE_URL, window.GASC_SUPABASE_ANON_KEY);
-      return window.supabaseClient;
-    }
-    return null;
-  }
-
-  function setBadge(text, bg, color) {
-    if (!badgeEl) return;
-    badgeEl.textContent = text;
-    badgeEl.style.background = bg;
-    badgeEl.style.color = color;
-  }
-
-  function stopCam() {
-    if (camStream) {
-      camStream.getTracks().forEach(t => t.stop());
-      camStream = null;
-    }
-    if (videoEl) {
-      videoEl.srcObject = null;
-      videoEl.style.display = 'none';
-    }
-  }
-
-  async function saveDescriptorViaRpc(sb, descriptorArr) {
-    const { error } = await sb.rpc('save_my_face_descriptor', {
-      p_descriptor: descriptorArr
-    });
-    if (error) throw new Error(error.message);
-  }
-
-  function readPendingDescriptor(email) {
-    const keys = [];
-    if (email) keys.push('gasc_pending_face_' + String(email).trim().toLowerCase());
-    keys.push('gasc_pending_face_descriptor');
-    for (const k of keys) {
-      const raw = localStorage.getItem(k);
-      if (!raw) continue;
-      try {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length === 128) {
-          return { key: k, arr: parsed };
-        }
-      } catch (_) {}
-    }
-    return null;
-  }
-
-  function clearPendingKeys(email) {
-    localStorage.removeItem('gasc_pending_face_descriptor');
-    if (email) {
-      localStorage.removeItem('gasc_pending_face_' + String(email).trim().toLowerCase());
-    }
-  }
-
-  async function initBiometricState() {
-    const sb = getSbClient();
-    if (!sb) {
-      setBadge('Config Error', '#fee2e2', '#991b1b');
-      statusEl.textContent = 'Supabase client not loaded.';
-      return;
-    }
-
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) {
-      setBadge('Login Required', '#fef3c7', '#92400e');
-      statusEl.textContent = 'Please log in to verify your face.';
-      return;
-    }
-
-    let { data: profile } = await sb
-      .from('profiles')
-      .select('face_descriptor, face_verified')
-      .eq('id', user.id)
-      .maybeSingle();
-
-    let hasDescriptor = Array.isArray(profile?.face_descriptor) && profile.face_descriptor.length === 128;
-
-    if (!hasDescriptor) {
-      const pending = readPendingDescriptor(user.email);
-      if (pending) {
-        try {
-          await saveDescriptorViaRpc(sb, pending.arr);
-          clearPendingKeys(user.email);
-          hasDescriptor = true;
-        } catch (err) {
-          setBadge('Sync Error', '#fee2e2', '#991b1b');
-          statusEl.textContent = 'Failed to sync registration face: ' + err.message;
-          return;
-        }
-      }
-    }
-
-    if (hasDescriptor) {
-      setBadge('Face Ready', '#dcfce7', '#166534');
-      statusEl.textContent = 'Face biometric linked. Click "Start Camera" and verify your face (< 0.55) to mark PRESENT.';
-    } else {
-      setBadge('Enroll Needed', '#fef3c7', '#92400e');
-      statusEl.textContent = 'No 128D face descriptor found. Click "Start Camera" -> "Enroll / Re-enroll Face".';
-    }
-  }
-
-  async function ensureModels() {
-    if (modelsLoaded) return;
-    if (!window.faceapi) throw new Error('face-api.js (v0.22.2) script failed to load.');
-    statusEl.textContent = 'Loading face recognition models...';
-    await Promise.all([
-      faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-      faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-      faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
-    ]);
-    modelsLoaded = true;
-  }
-
-  async function detectSingleDescriptor() {
-    await ensureModels();
-    const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.6 });
-    const dets = await faceapi.detectAllFaces(videoEl, opts).withFaceLandmarks().withFaceDescriptors();
-    if (!dets || dets.length === 0) throw new Error('No face detected. Ensure good lighting and look straight at camera.');
-    if (dets.length > 1) throw new Error('Multiple faces detected. Keep only one face in frame.');
-    return dets[0].descriptor;
-  }
-
-  openCamBtn?.addEventListener('click', async () => {
-    try {
-      openCamBtn.disabled = true;
-      statusEl.textContent = 'Requesting camera permission...';
-      camStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
-        audio: false
-      });
-      videoEl.srcObject = camStream;
-      videoEl.style.display = 'block';
-      await new Promise((resolve, reject) => {
-        videoEl.onloadedmetadata = async () => {
-          try { await videoEl.play(); resolve(); } catch (e) { reject(e); }
-        };
-      });
-      verifyBtn.disabled = false;
-      enrollBtn.disabled = false;
-      setBadge('Camera Active', '#e0f2fe', '#075985');
-      statusEl.textContent = 'Camera active. Click "Verify Face & Mark PRESENT".';
-    } catch (err) {
-      setBadge('Camera Error', '#fee2e2', '#991b1b');
-      statusEl.textContent = 'Camera error: ' + (err.message || 'Permission denied.');
-    } finally {
-      openCamBtn.disabled = false;
-    }
-  });
-
-  enrollBtn?.addEventListener('click', async () => {
-    try {
-      enrollBtn.disabled = true;
-      verifyBtn.disabled = true;
-      const sb = getSbClient();
-      if (!sb) throw new Error('Supabase client not initialized.');
-      const { data: { user } } = await sb.auth.getUser();
-      if (!user) throw new Error('Please log in first.');
-
-      statusEl.textContent = 'Capturing 128D face descriptor...';
-      const desc = await detectSingleDescriptor();
-      const descriptorArr = Array.from(desc).map(n => Number(Number(n).toFixed(8)));
-
-      await saveDescriptorViaRpc(sb, descriptorArr);
-      clearPendingKeys(user.email);
-
-      setBadge('Face Enrolled', '#dcfce7', '#166534');
-      statusEl.textContent = 'Face biometric saved! Now click "Verify Face & Mark PRESENT".';
-      verifyBtn.disabled = false;
-      enrollBtn.disabled = false;
-    } catch (err) {
-      setBadge('Enroll Error', '#fee2e2', '#991b1b');
-      statusEl.textContent = err.message || 'Enrollment failed.';
-      verifyBtn.disabled = false;
-      enrollBtn.disabled = false;
-    }
-  });
-
-  verifyBtn?.addEventListener('click', async () => {
-    try {
-      verifyBtn.disabled = true;
-      enrollBtn.disabled = true;
-      const sb = getSbClient();
-      if (!sb) throw new Error('Supabase client not initialized.');
-
-      const { data: { user } } = await sb.auth.getUser();
-      if (!user) throw new Error('Please log in first.');
-
-      const { data: profile, error: pErr } = await sb
-        .from('profiles')
-        .select('face_descriptor')
-        .eq('id', user.id)
-        .single();
-
-      if (pErr || !Array.isArray(profile?.face_descriptor) || profile.face_descriptor.length !== 128) {
-        throw new Error('No 128D face descriptor found. Click "Enroll / Re-enroll Face" first.');
-      }
-
-      statusEl.textContent = 'Verifying live face (Euclidean distance < 0.55)...';
-      const liveDesc = await detectSingleDescriptor();
-      const storedDesc = new Float32Array(profile.face_descriptor);
-      const dist = Number(faceapi.euclideanDistance(liveDesc, storedDesc).toFixed(4));
-
-      if (dist >= THRESHOLD) {
-        setBadge('Not Matched', '#fee2e2', '#991b1b');
-        statusEl.textContent = `Face NOT matched (distance ${dist} >= ${THRESHOLD}). PRESENT not marked.`;
-        verifyBtn.disabled = false;
-        enrollBtn.disabled = false;
-        return;
-      }
-
-      const { error: attErr } = await sb.rpc('mark_face_attendance', {
-        p_match_distance: dist
-      });
-
-      if (attErr) throw new Error(attErr.message);
-
-      setBadge('PRESENT', '#dcfce7', '#166534');
-      statusEl.textContent = `Face verified (distance: ${dist} < ${THRESHOLD}). Attendance marked as PRESENT!`;
-      stopCam();
-    } catch (err) {
-      setBadge('Error', '#fee2e2', '#991b1b');
-      statusEl.textContent = err.message || 'Verification failed.';
-      verifyBtn.disabled = false;
-      enrollBtn.disabled = false;
-    }
-  });
-
-  setTimeout(initBiometricState, 500);
-})();
-</script>
-</body></html>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+  <script src="assets/config.js"></script>
+  <script src="assets/app.js"></script>
+</body>
+</html>
